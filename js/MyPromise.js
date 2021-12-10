@@ -1,11 +1,15 @@
 // 实现 MyPromise
-const PENDING = "pending"; // 等待；
-const FULFILLED = "fulfilled"; // 成功；
-const REJECTED = "rejected"; // 失败；
+const PENDING = 'pending'; // 等待；
+const FULFILLED = 'fulfilled'; // 成功；
+const REJECTED = 'rejected'; // 失败；
 class MyPromise {
     constructor(executor) {
-        // 表示执行器，，立即调用执行器
-        executor(this.resolve, this.reject);
+        try {
+            // 表示执行器，，立即调用执行器
+            executor(this.resolve, this.reject)
+        } catch (e) {
+            this.reject(e);
+        }
     }
     // promise 状态；
     status = PENDING;
@@ -17,7 +21,7 @@ class MyPromise {
     successCallback = [];
     // 失败回调；
     failCallback = [];
-    resolve = (value) => {
+    resolve = value => {
         // 如果状态不是等待 阻止程序向下执行；
         if (this.status !== PENDING) return;
         // 将状态改为成功；
@@ -26,10 +30,9 @@ class MyPromise {
         this.value = value;
         // 判断成功回调是否存在，如果存在，就调用；
         // this.successCallback && this.successCallback(this.value);
-        while (this.successCallback.length)
-            this.successCallback.shift()(this.value);
-    };
-    reject = (reason) => {
+        while (this.successCallback.length) this.successCallback.shift()();
+    }
+    reject = reason => {
         // 如果状态不是等待 阻止程序向下执行；
         if (this.status !== PENDING) return;
         // 将状态改为失败；
@@ -38,43 +41,114 @@ class MyPromise {
         this.reason = reason;
         // 判断失败回调是否存在，如果存在，就调用；
         // this.failCallback && this.failCallback(this.reason);
-        while (this.failCallback.length) this.failCallback.shift()(this.reason);
-    };
+        while (this.failCallback.length) this.failCallback.shift()();
+    }
     then(successCallback, failCallback) {
-        // 实现 then 链式调用 ，
+        successCallback = successCallback ? successCallback : value => value;
+        failCallback = failCallback ? failCallback : reason => {
+            throw reason
+        };
+        // 实现 then 链式调用 ， 
         let promiseObj = new MyPromise((resolve, reject) => {
             // 判断状态
             if (this.status === FULFILLED) {
                 // 成功的回调函数
                 // 异步获取 promiseObj 执行完后的 promise 对象
                 setTimeout(() => {
-                    let x = successCallback(this.value);
-                    //1. 判断 x 的值是普通值还是 promise 对象；
-                    //2. 如果是普通值，直接 resolve(x)返回出去；
-                    //3. 如果是 promise 对象，查看 promise 对象返回的结果；
-                    //4. 再根据 promise 对象返回结果，决定调用 resolve 还是 reject；
-                    resolvePromise(promiseObj, x, resolve, reject);
-                }, 0);
+                    try {
+                        let x = successCallback(this.value);
+                        resolvePromise(promiseObj, x, resolve, reject);
+                    } catch (e) {
+                        reject(e)
+                    }
+                }, 0)
             } else if (this.status === REJECTED) {
                 // 失败的回调函数
-                failCallback(this.reason);
+                setTimeout(() => {
+                    try {
+                        let x = failCallback(this.reason);
+                        resolvePromise(promiseObj, x, resolve, reject);
+                    } catch (e) {
+                        reject(e)
+                    }
+                }, 0)
             } else {
                 // 等待的状态
                 // 将成功回调和失败回调存储起来 存储在数组中实现多次调用
-                this.successCallback.push(successCallback);
-                this.failCallback.push(failCallback);
+                this.successCallback.push(() => {
+                    setTimeout(() => {
+                        try {
+                            let x = successCallback(this.value);
+                            resolvePromise(promiseObj, x, resolve, reject);
+                        } catch (e) {
+                            reject(e)
+                        }
+                    }, 0)
+                });
+                this.failCallback.push(() => {
+                    setTimeout(() => {
+                        try {
+                            let x = failCallback(this.reason);
+                            resolvePromise(promiseObj, x, resolve, reject);
+                        } catch (e) {
+                            reject(e)
+                        }
+                    }, 0)
+                });
             }
         });
         // then 方法返回的 promise 对象；
         return promiseObj;
     }
+    static all(array) {
+        let result = [],
+            index = 0;
+        return new MyPromise((resolve, reject) => {
+            function addData(key, value) {
+                result[key] = value;
+                // 等待异步操作
+                index++;
+                if (index === array.length) {
+                    resolve(result);
+                }
+            }
+            for (let i = 0; i < array.length; i++) {
+                let current = array[i];
+                if (current instanceof MyPromise) {
+                    // promise 对象
+                    current.then(value => addData(i, value), reason => reject(reason))
+                } else {
+                    // 普通值
+                    addData(i, array[i]);
+                }
+            }
+            resolve(result);
+        })
+    }
+    static resolve(value) {
+        if (value instanceof MyPromise) return value;
+        return new MyPromise(resolve => resolve(value))
+    }
+    finally(callback) {
+        return this.then(value => {
+            return MyPromise.resolve(callback()).then(() => value);
+        }, reason => {
+            return MyPromise.resolve(callback()).then(() => {
+                throw reason
+            });
+        })
+    } catch (failCallback) {
+        return this.then(undefined, failCallback);
+    }
 }
 
 function resolvePromise(promiseObj, x, resolve, reject) {
+    //1. 判断 x 的值是普通值还是 promise 对象；
+    //2. 如果是普通值，直接 resolve(x)返回出去；
+    //3. 如果是 promise 对象，查看 promise 对象返回的结果；
+    //4. 再根据 promise 对象返回结果，决定调用 resolve 还是 reject；
     if (promiseObj === x) {
-        return reject(
-            new TpyeError("Chaining cycle detected for promise #<Promise>")
-        );
+        return reject(new TpyeError('Chaining cycle detected for promise #<Promise>'))
     }
     if (x instanceof MyPromise) {
         // 是 promise 对象
@@ -90,13 +164,24 @@ function resolvePromise(promiseObj, x, resolve, reject) {
 const myPromise = new MyPromise((resolve, reject) => {
     setTimeout((i = 0) => {
         resolve(`成功 ${++i}`);
-    }, 2000);
-});
-myPromise.then(
-    (value) => {
-        console.log(value); // 成功
-    },
-    (reason) => {
-        console.log(reason);
-    }
-);
+    }, 2000)
+})
+myPromise.then(value => {
+    console.log(value); // 成功
+}, reason => {
+    console.log(reason);
+})
+// 多次调用
+myPromise.then(value => {
+    console.log(value); // 成功
+}, reason => {
+    console.log(reason);
+})
+
+// then 链式调用
+myPromise.then(value => {
+    console.log(value); // 成功
+    return 100
+}).then(value => {
+    console.log(value); // 100
+})
